@@ -1,4 +1,6 @@
-streamlit 
-PyPDF2 
-python-docx 
+streamlit
+PyPDF2
+python-docx
+docx2txt
+reportlab
 requests
