@@ -1,9 +1,10 @@
 import streamlit as st
 import PyPDF2
+import docx2txt
 from io import BytesIO
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
 import requests
+import difflib
+import html
 
 # Configuración de la página
 st.set_page_config(
@@ -16,20 +17,43 @@ st.title("Corrector de Gramática y Estilo para Textos en Español")
 
 # Instrucciones
 st.markdown("""
-Esta aplicación permite subir un archivo PDF y corregirlo en hasta **200,000 caracteres**. 
-Selecciona el nivel de corrección y descarga el documento corregido en formato PDF manteniendo el formato original tanto como sea posible.
+Esta aplicación permite subir un archivo en formato **PDF** o **DOCX** y corregirlo en hasta **200,000 caracteres**. 
+Selecciona el nivel de corrección y visualiza las correcciones realizadas en el texto con resaltados de colores, similar al "Control de Cambios" de Word.
 """)
 
 # Carga de la clave API desde los secretos de Streamlit
-OPENROUTER_API_KEY = st.secrets["openrouter"]["api_key"]
+try:
+    OPENROUTER_API_KEY = st.secrets["openrouter"]["api_key"]
+except KeyError:
+    st.error("Clave API de OpenRouter no encontrada. Por favor, configúrala en los secretos de Streamlit.")
+    st.stop()
 
 # Función para extraer texto del PDF
 def extract_text_from_pdf(file):
-    reader = PyPDF2.PdfReader(file)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text() + "\n"
-    return text
+    try:
+        reader = PyPDF2.PdfReader(file)
+        text = ""
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        return text
+    except Exception as e:
+        st.error(f"Error al extraer texto del PDF: {e}")
+        return ""
+
+# Función para extraer texto del DOCX
+def extract_text_from_docx(file):
+    try:
+        # Guardar el archivo en memoria
+        with BytesIO() as docx_buffer:
+            docx_buffer.write(file.read())
+            docx_buffer.seek(0)
+            text = docx2txt.process(docx_buffer)
+        return text
+    except Exception as e:
+        st.error(f"Error al extraer texto del DOCX: {e}")
+        return ""
 
 # Función para dividir el texto en chunks si es necesario
 def split_text(text, max_length=1500):
@@ -72,46 +96,48 @@ def correct_text(text, level):
         ]
     }
 
-    response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
-    
-    if response.status_code == 200:
+    try:
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
+        response.raise_for_status()
         result = response.json()
         return result['choices'][0]['message']['content']
-    else:
-        st.error(f"Error en la API: {response.status_code} - {response.text}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error en la API: {e}")
+        return None
+    except KeyError:
+        st.error("Respuesta inesperada de la API.")
         return None
 
-# Función para generar un PDF a partir del texto corregido
-def generate_pdf(original_pdf, corrected_text):
-    reader = PyPDF2.PdfReader(original_pdf)
-    packet = BytesIO()
-    can = canvas.Canvas(packet, pagesize=letter)
+# Función para resaltar las diferencias entre el texto original y el corregido (a nivel de palabra)
+def highlight_differences_word_level(original, corrected):
+    # Escapar caracteres HTML
+    original = html.escape(original)
+    corrected = html.escape(corrected)
 
-    # Simplemente agregando el texto corregido; mantener el formato original es complejo
-    # Para una mejor preservación del formato, se necesitarían herramientas más avanzadas
-    text_object = can.beginText(40, 750)
-    for line in corrected_text.split('\n'):
-        text_object.textLine(line)
-    can.drawText(text_object)
-    can.save()
+    # Dividir en palabras
+    original_words = original.split()
+    corrected_words = corrected.split()
 
-    packet.seek(0)
-    new_pdf = PyPDF2.PdfReader(packet)
-    writer = PyPDF2.PdfWriter()
+    # Crear una instancia de Differ
+    differ = difflib.Differ()
+    diff = list(differ.compare(original_words, corrected_words))
 
-    # Agregar las páginas originales y sobreponer el texto corregido
-    for page_num in range(len(reader.pages)):
-        page = reader.pages[page_num]
-        if page_num < len(new_pdf.pages):
-            page.merge_page(new_pdf.pages[page_num])
-        writer.add_page(page)
+    # Construir el HTML con resaltados
+    html_diff = ""
+    for word in diff:
+        if word.startswith("- "):
+            # Eliminaciones en rojo con tachado
+            html_diff += f'<span style="background-color: #ffcccc; text-decoration: line-through;">{word[2:]}</span> '
+        elif word.startswith("+ "):
+            # Inserciones en verde
+            html_diff += f'<span style="background-color: #ccffcc;">{word[2:]}</span> '
+        else:
+            # Palabras sin cambios
+            html_diff += f'{word[2:]} '
+    return html_diff
 
-    output = BytesIO()
-    writer.write(output)
-    return output.getvalue()
-
-# Interfaz de usuario para subir el archivo PDF
-uploaded_file = st.file_uploader("Sube tu archivo PDF", type=["pdf"])
+# Interfaz de usuario para subir el archivo
+uploaded_file = st.file_uploader("Sube tu archivo PDF o DOCX", type=["pdf", "docx"])
 
 # Selección del nivel de corrección
 correction_level = st.selectbox(
@@ -120,15 +146,24 @@ correction_level = st.selectbox(
 )
 
 if uploaded_file is not None:
-    with st.spinner("Extrayendo texto del PDF..."):
-        text = extract_text_from_pdf(uploaded_file)
-    
-    if len(text) > 200000:
+    with st.spinner("Extrayendo texto del archivo..."):
+        if uploaded_file.type == "application/pdf":
+            text = extract_text_from_pdf(uploaded_file)
+        elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            text = extract_text_from_docx(uploaded_file)
+        else:
+            st.error("Formato de archivo no soportado.")
+            text = ""
+
+    if not text:
+        st.error("No se pudo extraer texto del archivo.")
+    elif len(text) > 200000:
         st.error("El documento supera los 200,000 caracteres. Por favor, sube un archivo más pequeño.")
     else:
         st.success("Texto extraído exitosamente.")
-        st.text_area("Texto Extraído", text, height=300)
-
+        st.subheader("Texto Original")
+        st.text_area("Texto Original", text, height=300)
+        
         if st.button("Corregir Texto"):
             with st.spinner("Corrigiendo el texto..."):
                 # Determinar el nivel de corrección
@@ -144,7 +179,7 @@ if uploaded_file is not None:
                 corrected_chunks = []
 
                 for i, chunk in enumerate(chunks):
-                    st.write(f"Corrigiendo chunk {i+1} de {len(chunks)}...")
+                    st.write(f"Corrigiendo fragmento {i+1} de {len(chunks)}...")
                     corrected = correct_text(chunk, level)
                     if corrected:
                         corrected_chunks.append(corrected)
@@ -156,14 +191,20 @@ if uploaded_file is not None:
 
                 if corrected_text:
                     st.success("Texto corregido exitosamente.")
+                    st.subheader("Texto Corregido")
                     st.text_area("Texto Corregido", corrected_text, height=300)
 
-                    # Generar el PDF corregido
-                    corrected_pdf = generate_pdf(uploaded_file, corrected_text)
+                    st.subheader("Control de Cambios")
+                    st.markdown(
+                        highlight_differences_word_level(text, corrected_text),
+                        unsafe_allow_html=True
+                    )
 
+                    # Opción para descargar el texto corregido
+                    corrected_text_bytes = corrected_text.encode('utf-8')
                     st.download_button(
-                        label="Descargar PDF Corregido",
-                        data=corrected_pdf,
-                        file_name="corregido.pdf",
-                        mime="application/pdf"
+                        label="Descargar Texto Corregido",
+                        data=corrected_text_bytes,
+                        file_name="corregido.txt",
+                        mime="text/plain"
                     )
