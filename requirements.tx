@@ -2,3 +2,4 @@ streamlit
 PyPDF2 
 reportlab 
 requests
+pypdf2
