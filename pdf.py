@@ -1,5 +1,4 @@
 import streamlit as st
-import PyPDF2
 import docx2txt
 from io import BytesIO
 import requests
@@ -7,8 +6,6 @@ import difflib
 import html
 from docx import Document
 from docx.shared import RGBColor
-from docx.oxml.ns import qn
-from docx.enum.text import WD_COLOR_INDEX
 
 # Configuración de la página
 st.set_page_config(
@@ -21,7 +18,7 @@ st.title("Corrector de Gramática y Estilo para Textos en Español")
 
 # Instrucciones
 st.markdown("""
-Esta aplicación permite subir un archivo en formato PDF o DOCX y corregirlo en hasta 200,000 caracteres. 
+Esta aplicación permite subir un archivo en formato **DOCX** y corregirlo en hasta 200,000 caracteres. 
 Selecciona el nivel de corrección y visualiza las correcciones realizadas en el texto con resaltados de colores, similar al "Control de Cambios" de Word.
 """)
 
@@ -31,20 +28,6 @@ try:
 except KeyError:
     st.error("Clave API de OpenRouter no encontrada. Por favor, configúrala en los secretos de Streamlit.")
     st.stop()
-
-# Función para extraer texto del PDF
-def extract_text_from_pdf(file):
-    try:
-        reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-        return text
-    except Exception as e:
-        st.error(f"Error al extraer texto del PDF: {e}")
-        return ""
 
 # Función para extraer texto del DOCX
 def extract_text_from_docx(file):
@@ -141,42 +124,6 @@ def highlight_differences_word_level(original, corrected):
     return html_diff
 
 # Función para crear un DOCX con control de cambios simulado
-def create_docx_with_changes(original, corrected):
-    document = Document()
-
-    # Dividir el texto en líneas para manejar párrafos
-    original_lines = original.split('\n')
-    corrected_lines = corrected.split('\n')
-
-    # Usar difflib para comparar líneas
-    differ = difflib.Differ()
-    diff = list(differ.compare(original_lines, corrected_lines))
-
-    for line in diff:
-        if line.startswith("- "):
-            # Eliminación: línea eliminada
-            para = document.add_paragraph()
-            run = para.add_run(line[2:])
-            run.font.color.rgb = RGBColor(255, 0, 0)  # Rojo
-            run.font.strike = True  # Tachado
-        elif line.startswith("+ "):
-            # Inserción: línea añadida
-            para = document.add_paragraph()
-            run = para.add_run(line[2:])
-            run.font.color.rgb = RGBColor(0, 128, 0)  # Verde
-        elif line.startswith("  "):
-            # Línea sin cambios
-            para = document.add_paragraph()
-            para.add_run(line[2:])
-        # Ignorar líneas que comienzan con '? '
-
-    # Guardar el documento en un objeto BytesIO
-    docx_buffer = BytesIO()
-    document.save(docx_buffer)
-    docx_buffer.seek(0)
-    return docx_buffer
-
-# Función para crear un DOCX con control de cambios a nivel de palabra
 def create_docx_with_changes_word_level(original, corrected):
     document = Document()
 
@@ -206,7 +153,7 @@ def create_docx_with_changes_word_level(original, corrected):
     return docx_buffer
 
 # Interfaz de usuario para subir el archivo
-uploaded_file = st.file_uploader("Sube tu archivo PDF o DOCX", type=["pdf", "docx"])
+uploaded_file = st.file_uploader("Sube tu archivo DOCX", type=["docx"])
 
 # Selección del nivel de corrección
 correction_level = st.selectbox(
@@ -216,13 +163,7 @@ correction_level = st.selectbox(
 
 if uploaded_file is not None:
     with st.spinner("Extrayendo texto del archivo..."):
-        if uploaded_file.type == "application/pdf":
-            text = extract_text_from_pdf(uploaded_file)
-        elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            text = extract_text_from_docx(uploaded_file)
-        else:
-            st.error("Formato de archivo no soportado.")
-            text = ""
+        text = extract_text_from_docx(uploaded_file)
 
     if not text:
         st.error("No se pudo extraer texto del archivo.")
