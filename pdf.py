@@ -5,6 +5,10 @@ from io import BytesIO
 import requests
 import difflib
 import html
+from docx import Document
+from docx.shared import RGBColor
+from docx.oxml.ns import qn
+from docx.enum.text import WD_COLOR_INDEX
 
 # Configuración de la página
 st.set_page_config(
@@ -136,6 +140,71 @@ def highlight_differences_word_level(original, corrected):
             html_diff += f'{word[2:]} '
     return html_diff
 
+# Función para crear un DOCX con control de cambios simulado
+def create_docx_with_changes(original, corrected):
+    document = Document()
+
+    # Dividir el texto en líneas para manejar párrafos
+    original_lines = original.split('\n')
+    corrected_lines = corrected.split('\n')
+
+    # Usar difflib para comparar líneas
+    differ = difflib.Differ()
+    diff = list(differ.compare(original_lines, corrected_lines))
+
+    for line in diff:
+        if line.startswith("- "):
+            # Eliminación: línea eliminada
+            para = document.add_paragraph()
+            run = para.add_run(line[2:])
+            run.font.color.rgb = RGBColor(255, 0, 0)  # Rojo
+            run.font.strike = True  # Tachado
+        elif line.startswith("+ "):
+            # Inserción: línea añadida
+            para = document.add_paragraph()
+            run = para.add_run(line[2:])
+            run.font.color.rgb = RGBColor(0, 128, 0)  # Verde
+        elif line.startswith("  "):
+            # Línea sin cambios
+            para = document.add_paragraph()
+            para.add_run(line[2:])
+        # Ignorar líneas que comienzan con '? '
+
+    # Guardar el documento en un objeto BytesIO
+    docx_buffer = BytesIO()
+    document.save(docx_buffer)
+    docx_buffer.seek(0)
+    return docx_buffer
+
+# Función para crear un DOCX con control de cambios a nivel de palabra
+def create_docx_with_changes_word_level(original, corrected):
+    document = Document()
+
+    # Usar difflib para comparar palabras
+    differ = difflib.Differ()
+    diff = list(differ.compare(original.split(), corrected.split()))
+
+    para = document.add_paragraph()
+    for word in diff:
+        if word.startswith("- "):
+            # Eliminación: palabra eliminada
+            run = para.add_run(word[2:] + " ")
+            run.font.color.rgb = RGBColor(255, 0, 0)  # Rojo
+            run.font.strike = True  # Tachado
+        elif word.startswith("+ "):
+            # Inserción: palabra añadida
+            run = para.add_run(word[2:] + " ")
+            run.font.color.rgb = RGBColor(0, 128, 0)  # Verde
+        else:
+            # Palabra sin cambios
+            para.add_run(word[2:] + " ")
+
+    # Guardar el documento en un objeto BytesIO
+    docx_buffer = BytesIO()
+    document.save(docx_buffer)
+    docx_buffer.seek(0)
+    return docx_buffer
+
 # Interfaz de usuario para subir el archivo
 uploaded_file = st.file_uploader("Sube tu archivo PDF o DOCX", type=["pdf", "docx"])
 
@@ -211,10 +280,21 @@ if uploaded_file is not None:
                         unsafe_allow_html=True
                     )
 
-                    # Opción para descargar el texto corregido
+                    # Crear DOCX con control de cambios simulado
+                    docx_buffer = create_docx_with_changes_word_level(text, corrected_text)
+
+                    # Opción para descargar el DOCX corregido
+                    st.download_button(
+                        label="Descargar Documento Corregido (DOCX)",
+                        data=docx_buffer,
+                        file_name="corregido.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+
+                    # Opción para descargar el texto corregido en TXT
                     corrected_text_bytes = corrected_text.encode('utf-8')
                     st.download_button(
-                        label="Descargar Texto Corregido",
+                        label="Descargar Texto Corregido (TXT)",
                         data=corrected_text_bytes,
                         file_name="corregido.txt",
                         mime="text/plain"
