@@ -17,7 +17,7 @@ st.title("Corrector de Gramática y Estilo para Textos en Español")
 
 # Instrucciones
 st.markdown("""
-Esta aplicación permite subir un archivo en formato **PDF** o **DOCX** y corregirlo en hasta **200,000 caracteres**. 
+Esta aplicación permite subir un archivo en formato PDF o DOCX y corregirlo en hasta 200,000 caracteres. 
 Selecciona el nivel de corrección y visualiza las correcciones realizadas en el texto con resaltados de colores, similar al "Control de Cambios" de Word.
 """)
 
@@ -178,8 +178,16 @@ if uploaded_file is not None:
                 chunks = split_text(text)
                 corrected_chunks = []
 
+                # Inicializar la barra de progreso
+                progress_bar = st.progress(0)
+                total_chunks = len(chunks)
+
                 for i, chunk in enumerate(chunks):
-                    st.write(f"Corrigiendo fragmento {i+1} de {len(chunks)}...")
+                    # Actualizar la barra de progreso
+                    progress = (i + 1) / total_chunks
+                    progress_bar.progress(progress)
+
+                    st.write(f"Corrigiendo fragmento {i+1} de {total_chunks}...")
                     corrected = correct_text(chunk, level)
                     if corrected:
                         corrected_chunks.append(corrected)
@@ -188,6 +196,9 @@ if uploaded_file is not None:
                         break
 
                 corrected_text = "\n".join(corrected_chunks)
+
+                # Completar la barra de progreso
+                progress_bar.progress(1.0)
 
                 if corrected_text:
                     st.success("Texto corregido exitosamente.")
